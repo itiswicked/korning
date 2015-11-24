@@ -16,99 +16,94 @@ def db_connection
   end
 end
 
-def extract(key)
-  @info.map { |row| row[key] }.uniq
-end
-
 def get_id(name, table)
+  query = "SELECT t.id FROM #{table} t WHERE t.name = ($1)"
   response = db_connection do |conn|
-    conn.exec_params(
-      "SELECT t.id FROM #{table} t WHERE t.name = ($1)",
-      [name]
-    )
+    conn.exec_params(query, [name])
   end
   response.first['id'].to_i
 end
 
+def customers
+  @info.map { |row|
+    { customer_name: row[:customer_name], account_no: row[:account_no] }
+  }.uniq
+end
+
+def products
+  @info.map { |row| { product_name: row[:product_name] } }.uniq
+end
+
+def frequencies
+  @info.map { |row| { invoice_frequency: row[:invoice_frequency] } }.uniq
+end
+
+def employees
+  @info
+    .map { |row| { employee_name: row[:employee_name], email: row[:email] } }
+    .uniq
+end
+
 @info = CSV
-  .readlines('sales.csv', headers: true)
+  .readlines('sales.csv', headers: true, header_converters: :symbol)
   .map(&:to_hash)
-  .each { |row|
-    name = row['employee'].split[0..1].join(' ')
-    email = row['employee'].split[2][1..-2]
-    row['employee'] = { name: name, email:  email }
-    customer = row['customer_and_account_no'].split[0]
-    account_no = row['customer_and_account_no'].split[1][1..-2]
-    row['customer_and_account_no'] = { name: customer, account_no: account_no }
-  }
-
-db_connection do |conn|
-  extract('employee').each do |row|
-    name = row[:name]
-    email = row[:email]
-    conn.exec_params(
-      'INSERT INTO
-       employees (name, email)
-       VALUES ($1, $2)', [name, email]
-    )
+  .map do |row|
+    row.map { |key, value|
+      if key == :employee
+        name = row[:employee].split[0..1].join(' ')
+        email = row[:employee].split[2][1..-2]
+        { employee_name: name, email:  email }
+      elsif key == :customer_and_account_no
+        name = row[:customer_and_account_no].split[0]
+        account_no = row[:customer_and_account_no].split[1][1..-2]
+        { customer_name: name, account_no: account_no }
+      else
+        { key => value }
+      end
+    }.reduce(:merge)
   end
-end
 
 db_connection do |conn|
-  extract('customer_and_account_no').each do |row|
-    name = row[:name]
-    account_no = row[:account_no]
-    conn.exec_params(
-      'INSERT INTO
-       customers (name, account_no)
-       VALUES ($1, $2)', [name, account_no]
-    )
+  employees.each do |row|
+    query = 'INSERT INTO employees (name, email) VALUES ($1, $2)'
+    conn.exec_params(query, [row[:employee_name], row[:email]])
   end
-end
 
-db_connection do |conn|
-  extract('product_name').each do |name|
-    conn.exec_params(
-      'INSERT INTO
-       products (name)
-       VALUES ($1)', [name]
-    )
+  customers.each do |row|
+    query = 'INSERT INTO customers (name, account_no) VALUES ($1, $2)'
+    conn.exec_params(query, [row[:customer_name], row[:account_no]])
   end
-end
 
-db_connection do |conn|
-  extract('invoice_frequency').each do |f|
-    conn.exec_params(
-      'INSERT INTO
-       frequencies (name)
-       VALUES ($1)', [f]
-    )
+  products.each do |row|
+    query = 'INSERT INTO products (name) VALUES ($1)'
+    conn.exec_params(query, [row[:product_name]])
   end
-end
 
-db_connection do |conn|
- @info.each do |row|
-   employee_id = get_id(row['employee'][:name], 'employees')
-   customer_id = get_id(row['customer_and_account_no'][:name], 'customers')
-   frequency_id = get_id(row['invoice_frequency'], 'frequencies')
-   invoice_no = row['invoice_no'].to_i
-   sale_date = row['sale_date']
-   sale_amount = row['sale_amount'][1..-1].to_f
-   units_sold = row['units_sold'].to_i
-   conn.exec_params(
-    'INSERT INTO invoices
-      (employee_id, customer_id, frequency_id, invoice_no,
+  frequencies.each do |row|
+    query = 'INSERT INTO frequencies (name) VALUES ($1)'
+    conn.exec_params(query, [row[:invoice_frequency]])
+  end
+
+  @info.each do |row|
+    employee_id = get_id(row[:employee_name], 'employees')
+    customer_id = get_id(row[:customer_name], 'customers')
+    frequency_id = get_id(row[:invoice_frequency], 'frequencies')
+    invoice_no = row[:invoice_no].to_i
+    sale_date = row[:sale_date]
+    sale_amount = row[:sale_amount][1..-1].to_f
+    units_sold = row[:units_sold].to_i
+    conn.exec_params(
+     'INSERT INTO invoices
+       (employee_id, customer_id, frequency_id, invoice_no,
         sale_date, sale_amount, units_sold)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)',
-    [employee_id, customer_id, frequency_id, invoice_no,
-      sale_date, sale_amount, units_sold]
-   )
- end
+     VALUES ($1, $2, $3, $4, $5, $6, $7)',
+     [employee_id, customer_id, frequency_id, invoice_no,
+       sale_date, sale_amount, units_sold]
+    )
+  end
 end
-puts "hello"
-puts db_connection { |conn| conn.exec('SELECT * FROM invoices;') }.to_a
 
-
+# puts db_connection { |conn| conn.exec('SELECT * FROM invoices;') }.to_a
 # puts db_connection { |conn| conn.exec('SELECT * FROM employees;') }.to_a
 # puts db_connection { |conn| conn.exec('SELECT * FROM customers;') }.to_a
 # puts db_connection { |conn| conn.exec('SELECT * FROM products;') }.to_a
